@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bridge Aggregator — GenLayer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0f; color: #e0e0e0; }
+.container { max-width: 900px; margin: 0 auto; padding: 20px; }
+.header { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid #1a1a2e; margin-bottom: 24px; }
+.header h1 { font-size: 1.4em; color: #10b981; }
+.btn { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all .2s; }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-primary { background: #10b981; color: white; }
+.btn-primary:hover:not(:disabled) { background: #059669; }
+.btn-outline { background: transparent; border: 1px solid #10b981; color: #10b981; }
+.btn-sm { padding: 6px 14px; font-size: 12px; }
+.card { background: #12121a; border: 1px solid #1a1a2e; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+.card h2 { font-size: 1.1em; margin-bottom: 12px; color: #34d399; }
+.form-group { margin-bottom: 12px; }
+.form-group label { display: block; font-size: 12px; color: #888; margin-bottom: 4px; }
+.form-group input, .form-group select { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #1a1a2e; background: #0a0a0f; color: #e0e0e0; font-size: 14px; }
+.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+.stat { background: #12121a; border: 1px solid #1a1a2e; border-radius: 10px; padding: 14px; text-align: center; }
+.stat .num { font-size: 1.6em; font-weight: 700; color: #34d399; }
+.stat .label { font-size: 10px; color: #666; margin-top: 4px; }
+.bridge-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
+.bridge-card { background: #0a0a0f; border: 1px solid #1a1a2e; border-radius: 8px; padding: 14px; text-align: center; }
+.bridge-card .name { font-weight: 600; margin-bottom: 8px; color: #34d399; }
+.bridge-card .fee { font-size: 1.4em; font-weight: 700; color: #10b981; }
+.bridge-card .detail { font-size: 11px; color: #666; margin-top: 4px; }
+.bridge-card.best { border-color: #10b981; background: #10b98110; }
+.best-badge { display: inline-block; background: #10b981; color: white; font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-top: 6px; }
+.tag { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; }
+.tag-PASS { background: #16a34a20; color: #16a34a; }
+.tag-FAIL { background: #dc262620; color: #dc2626; }
+.tag-PARTIAL { background: #f59e0b20; color: #f59e0b; }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ffffff40; border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 6px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 24px; border-radius: 8px; font-size: 13px; z-index: 999; }
+.toast-success { background: #16a34a; color: white; }
+.toast-error { background: #dc2626; color: white; }
+@media (max-width: 768px) { .bridge-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <h1>Bridge Aggregator</h1>
+      <div style="font-size:11px;color:#666;margin-top:4px;">Cross-chain bridge comparison with AI consensus</div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <a href="#" id="explorerLink" style="color:#10b981;font-size:11px;text-decoration:none;">Explorer</a>
+      <button class="btn btn-outline btn-sm" id="connectBtn">Connect Wallet</button>
+    </div>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat"><div class="num" id="statTotal">-</div><div class="label">Queries</div></div>
+    <div class="stat"><div class="num" id="statValidated">-</div><div class="label">Cross-Validated</div></div>
+    <div class="stat"><div class="num" id="statBridges">-</div><div class="label">Bridges</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Find Best Bridge Route</h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;">
+      <div class="form-group"><label>From Chain</label>
+        <select id="srcChain"><option>ethereum</option><option>bsc</option><option>polygon</option><option>arbitrum</option><option>optimism</option></select>
+      </div>
+      <div class="form-group"><label>To Chain</label>
+        <select id="dstChain"><option>polygon</option><option>arbitrum</option><option>optimism</option><option>bsc</option><option>ethereum</option></select>
+      </div>
+      <div class="form-group"><label>Token</label>
+        <select id="token"><option>USDC</option><option>USDT</option><option>ETH</option><option>DAI</option></select>
+      </div>
+      <div class="form-group"><label>Amount</label><input id="amount" type="number" placeholder="1000" value="1000"></div>
+    </div>
+    <button class="btn btn-primary" id="findBtn">Find Best Route</button>
+    <div id="resultArea" style="margin-top:16px;display:none;">
+      <div id="bestResult" style="font-size:13px;margin-bottom:12px;"></div>
+      <div id="bridgeComparison" class="bridge-grid"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/genlayer-js@1.2.0/+esm';
+
+let CONTRACT = '0xPLACEHOLDER';
+
+const chainConfig = {
+  id: 2365, name: 'Bradbury',
+  rpcUrls: { default: { http: ['https://rpc-bradbury.genlayer.com'] } },
+  nativeCurrency: { name: 'GEN', symbol: 'GEN', decimals: 18 }
+};
+
+const readClient = createClient({ chain: chainConfig });
+let writeClient = null;
+let account = null;
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = String(str ?? '');
+  return div.innerHTML;
+}
+
+async function connectWallet() {
+  if (!window.ethereum) throw new Error('Install MetaMask');
+  await window.ethereum.request({ method: 'eth_requestAccounts' });
+  const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+  account = accounts[0];
+  writeClient = createClient({ chain: chainConfig, account, provider: window.ethereum });
+  await writeClient.connect('testnetBradbury');
+  return account;
+}
+
+document.getElementById('connectBtn').onclick = async () => {
+  const btn = document.getElementById('connectBtn');
+  try {
+    btn.disabled = true; btn.textContent = 'Connecting...';
+    const addr = await connectWallet();
+    btn.textContent = addr.slice(0,6)+'...'+addr.slice(-4);
+    btn.className = 'btn btn-primary btn-sm';
+    toast('Wallet connected!', 'success');
+  } catch(e) { toast(e.message, 'error'); btn.textContent = 'Connect Wallet'; btn.className = 'btn btn-outline btn-sm'; }
+  finally { btn.disabled = false; }
+};
+
+async function readContract(method, args) {
+  return await readClient.readContract({ address: CONTRACT, functionName: method, args });
+}
+
+async function writeContract(method, args) {
+  if (!writeClient) await connectWallet();
+  const txHash = await writeClient.writeContract({ address: CONTRACT, functionName: method, args, value: 0n });
+  await writeClient.waitForTransactionReceipt({ hash: txHash, status: 'ACCEPTED' });
+  return txHash;
+}
+
+async function loadStats() {
+  try {
+    const count = await readContract('get_quote_count', []);
+    document.getElementById('statTotal').textContent = count.toString();
+    const bridges = await readContract('get_supported_bridges', []);
+    document.getElementById('statBridges').textContent = bridges.length.toString();
+  } catch(e) { console.log(e); }
+}
+
+document.getElementById('findBtn').onclick = async () => {
+  const srcChain = document.getElementById('srcChain').value;
+  const dstChain = document.getElementById('dstChain').value;
+  const token = document.getElementById('token').value;
+  const amount = document.getElementById('amount').value;
+  if (!amount) return toast('Enter amount', 'error');
+  if (srcChain === dstChain) return toast('Select different chains', 'error');
+
+  const btn = document.getElementById('findBtn');
+  btn.disabled = true; btn._origText = btn.textContent;
+  const spinner = document.createElement('span');
+  spinner.className = 'spinner';
+  btn.textContent = '';
+  btn.appendChild(spinner);
+  btn.appendChild(document.createTextNode(' Finding...'));
+
+  const resultArea = document.getElementById('resultArea');
+  resultArea.style.display = 'none';
+
+  try {
+    await writeContract('find_best_route', [srcChain, dstChain, token, amount]);
+    const raw = await readContract('get_latest', [srcChain, dstChain, token]);
+    const q = typeof raw === 'string' ? JSON.parse(raw) : raw;
+
+    resultArea.style.display = 'block';
+    const bestResult = document.getElementById('bestResult');
+    bestResult.textContent = '';
+
+    const summary = document.createElement('div');
+    summary.style.fontSize = '1.2em';
+    summary.style.fontWeight = '700';
+    summary.style.color = '#10b981';
+    summary.textContent = 'Best: ' + escapeHtml(q.best_bridge) + ' — Fee: ' + escapeHtml(q.best_fee) + ' — Time: ' + escapeHtml(q.best_time) + 'min';
+    bestResult.appendChild(summary);
+
+    const validation = document.createElement('div');
+    validation.style.marginTop = '8px';
+    validation.innerHTML = 'Cross-validation: <span class="tag tag-' + escapeHtml(q.cross_validation) + '">' + escapeHtml(q.cross_validation) + '</span> Agreement: ' + escapeHtml(q.source_agreement) + '%';
+    bestResult.appendChild(validation);
+
+    const bridgeDiv = document.getElementById('bridgeComparison');
+    bridgeDiv.textContent = '';
+
+    try {
+      const allQuotes = JSON.parse(q.all_quotes);
+      for (const [bridge, data] of Object.entries(allQuotes)) {
+        const card = document.createElement('div');
+        card.className = 'bridge-card' + (bridge === q.best_bridge ? ' best' : '');
+
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = bridge;
+        card.appendChild(name);
+
+        const fee = document.createElement('div');
+        fee.className = 'fee';
+        fee.textContent = data.fee || '0';
+        card.appendChild(fee);
+
+        const detail = document.createElement('div');
+        detail.className = 'detail';
+        detail.textContent = 'Time: ' + (data.time || '0') + 'min · Output: ' + (data.output || '0');
+        card.appendChild(detail);
+
+        if (bridge === q.best_bridge) {
+          const badge = document.createElement('div');
+          badge.className = 'best-badge';
+          badge.textContent = 'BEST';
+          card.appendChild(badge);
+        }
+
+        bridgeDiv.appendChild(card);
+      }
+    } catch(e) { console.log('Failed to parse quotes:', e); }
+
+    toast('Best route found!', 'success');
+    loadStats();
+  } catch(e) { toast(e.message, 'error'); }
+  btn.disabled = false; btn.textContent = btn._origText;
+};
+
+function toast(msg, type) {
+  const t = document.createElement('div');
+  t.className = 'toast toast-'+type;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 5000);
+}
+
+loadStats();
+</script>
+</body>
+</html>
