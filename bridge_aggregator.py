@@ -4,11 +4,31 @@ from dataclasses import dataclass
 from genlayer import *
 
 
-BRIDGE_SOURCES = {
-    "stargate": "https://api.stargate.finance/quote?srcChain={src}&dstChain={dst}&token={token}&amount={amount}",
-    "hop": "https://api.hop.exchange/quote?fromChain={src}&toChain={dst}&token={token}&amount={amount}",
-    "across": "https://api.across.to/quote?originChain={src}&destinationChain={dst}&token={token}&amount={amount}",
-    "cbridge": "https://cbridge-api.celer.network/quote?src_chain={src}&dst_chain={dst}&token={token}&amount={amount}",
+BRIDGE_ADAPTERS = {
+    "stargate": {
+        "url": "https://api.stargate.finance/quote",
+        "chain_ids": {"ethereum": "1", "polygon": "137", "arbitrum": "42161", "optimism": "10"},
+        "token_ids": {"USDC": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "USDT": "0xdAC17F958D2ee523a2206206994597C13D831ec7"},
+        "amount_decimals": 6,
+    },
+    "hop": {
+        "url": "https://api.hop.exchange/quote",
+        "chain_ids": {"ethereum": "1", "polygon": "137", "arbitrum": "42161", "optimism": "10"},
+        "token_ids": {"USDC": "USDC", "USDT": "USDT"},
+        "amount_decimals": 6,
+    },
+    "across": {
+        "url": "https://across.to/api/quote",
+        "chain_ids": {"ethereum": "1", "polygon": "137", "arbitrum": "42161", "optimism": "10"},
+        "token_ids": {"USDC": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "USDT": "0xdAC17F958D2ee523a2206206994597C13D831ec7"},
+        "amount_decimals": 6,
+    },
+    "cbridge": {
+        "url": "https://cbridge-api.celer.network/quote",
+        "chain_ids": {"ethereum": "1", "polygon": "137", "arbitrum": "42161", "optimism": "10"},
+        "token_ids": {"USDC": "USDC", "USDT": "USDT"},
+        "amount_decimals": 6,
+    },
 }
 
 
@@ -27,6 +47,8 @@ class BridgeQuote:
     all_quotes: str
     cross_validation: str
     source_agreement: str
+    bridges_checked: str
+    bridges_retrieved: str
     reasoning: str
     fetched_at: str
 
@@ -35,6 +57,9 @@ class BridgeAggregator(gl.Contract):
     quotes: TreeMap[str, str]
     latest: TreeMap[str, str]
     quote_count: u256
+
+    SUPPORTED_BRIDGES = ("stargate", "hop", "across", "cbridge")
+    CROSS_VALIDATION_VALUES = ("PASS", "FAIL", "PARTIAL")
 
     def __init__(self):
         self.quote_count = 0
@@ -47,15 +72,46 @@ class BridgeAggregator(gl.Contract):
             return body.decode("utf-8", errors="replace")
         return str(body)
 
-    def _fetch_quote(self, bridge: str, src_chain: str, dst_chain: str, token: str, amount: str) -> dict:
-        url_template = BRIDGE_SOURCES.get(bridge, "")
-        if not url_template:
-            return {"bridge": bridge, "fee": "0", "time": "0", "output": "0", "retrieved": False}
+    def _validate_result(self, result: dict) -> bool:
+        best_bridge = result.get("best_bridge", "")
+        if best_bridge not in self.SUPPORTED_BRIDGES and best_bridge != "none":
+            return False
+        cross_val = result.get("cross_validation", "")
+        if cross_val not in self.CROSS_VALIDATION_VALUES:
+            return False
+        try:
+            float(result.get("best_fee", "0"))
+            float(result.get("best_time", "0"))
+            float(result.get("best_output", "0"))
+            int(result.get("source_agreement", "0"))
+        except (ValueError, TypeError):
+            return False
+        return True
 
-        url = url_template.format(src=src_chain, dst=dst_chain, token=token, amount=amount)
+    def _build_url(self, bridge: str, src_chain: str, dst_chain: str, token: str, amount: str) -> str:
+        adapter = BRIDGE_ADAPTERS.get(bridge)
+        if not adapter:
+            return ""
+        src_id = adapter["chain_ids"].get(src_chain, "")
+        dst_id = adapter["chain_ids"].get(dst_chain, "")
+        token_id = adapter["token_ids"].get(token, "")
+        if not src_id or not dst_id or not token_id:
+            return ""
+        try:
+            amount_int = int(float(amount) * (10 ** adapter["amount_decimals"]))
+        except (ValueError, TypeError):
+            return ""
+        return adapter["url"] + "?srcChainId=" + src_id + "&dstChainId=" + dst_id + "&token=" + token_id + "&amount=" + str(amount_int)
+
+    def _fetch_quote(self, bridge: str, src_chain: str, dst_chain: str, token: str, amount: str) -> dict:
+        url = self._build_url(bridge, src_chain, dst_chain, token, amount)
+        if not url:
+            return {"bridge": bridge, "url": "", "data": "", "retrieved": False}
         try:
             content = gl.nondet.web.render(url)
             body = self._decode_body(content)[:1500]
+            if not body:
+                return {"bridge": bridge, "url": url, "data": "", "retrieved": False}
             return {"bridge": bridge, "url": url, "data": body, "retrieved": True}
         except Exception:
             return {"bridge": bridge, "url": url, "data": "", "retrieved": False}
@@ -63,7 +119,7 @@ class BridgeAggregator(gl.Contract):
     def _find_best_route(self, src_chain: str, dst_chain: str, token: str, amount: str) -> dict:
         def gather_and_compare() -> dict:
             fetched = []
-            for bridge in BRIDGE_SOURCES:
+            for bridge in self.SUPPORTED_BRIDGES:
                 result = self._fetch_quote(bridge, src_chain, dst_chain, token, amount)
                 fetched.append(result)
 
@@ -106,7 +162,7 @@ class BridgeAggregator(gl.Contract):
                 result = json.loads(result.replace("```json", "").replace("```", ""))
             if not isinstance(result, dict):
                 raise gl.vm.UserError("[LLM_ERROR] LLM returned non-dict result")
-            result["bridges_checked"] = len(BRIDGE_SOURCES)
+            result["bridges_checked"] = len(self.SUPPORTED_BRIDGES)
             result["bridges_retrieved"] = len(retrieved)
             return result
 
@@ -134,6 +190,9 @@ class BridgeAggregator(gl.Contract):
 
         result = self._find_best_route(src_chain.strip().lower(), dst_chain.strip().lower(), token.strip().upper(), amount.strip())
 
+        if not self._validate_result(result):
+            raise gl.vm.UserError("Invalid consensus result")
+
         from datetime import datetime, timezone
         self.quote_count += 1
         quote_id = str(self.quote_count)
@@ -151,6 +210,8 @@ class BridgeAggregator(gl.Contract):
             all_quotes=json.dumps(result.get("all_quotes", {})),
             cross_validation=str(result.get("cross_validation", "FAIL")),
             source_agreement=str(result.get("source_agreement", "0")),
+            bridges_checked=str(result.get("bridges_checked", 0)),
+            bridges_retrieved=str(result.get("bridges_retrieved", 0)),
             reasoning=str(result.get("reasoning", "")),
             fetched_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -174,7 +235,7 @@ class BridgeAggregator(gl.Contract):
 
     @gl.public.view
     def get_supported_bridges(self) -> list:
-        return list(BRIDGE_SOURCES.keys())
+        return list(self.SUPPORTED_BRIDGES)
 
     @gl.public.view
     def get_stats(self) -> dict:
