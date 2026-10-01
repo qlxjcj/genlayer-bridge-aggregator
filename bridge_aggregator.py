@@ -10,24 +10,28 @@ BRIDGE_ADAPTERS = {
         "chain_ids": {"ethereum": "1", "polygon": "137", "arbitrum": "42161", "optimism": "10"},
         "token_ids": {"USDC": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "USDT": "0xdAC17F958D2ee523a2206206994597C13D831ec7"},
         "amount_decimals": 6,
+        "response_schema": ["fee", "time", "output"],
     },
     "hop": {
         "url": "https://api.hop.exchange/quote",
         "chain_ids": {"ethereum": "1", "polygon": "137", "arbitrum": "42161", "optimism": "10"},
         "token_ids": {"USDC": "USDC", "USDT": "USDT"},
         "amount_decimals": 6,
+        "response_schema": ["fee", "time", "output"],
     },
     "across": {
         "url": "https://across.to/api/quote",
         "chain_ids": {"ethereum": "1", "polygon": "137", "arbitrum": "42161", "optimism": "10"},
         "token_ids": {"USDC": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "USDT": "0xdAC17F958D2ee523a2206206994597C13D831ec7"},
         "amount_decimals": 6,
+        "response_schema": ["fee", "time", "output"],
     },
     "cbridge": {
         "url": "https://cbridge-api.celer.network/quote",
         "chain_ids": {"ethereum": "1", "polygon": "137", "arbitrum": "42161", "optimism": "10"},
         "token_ids": {"USDC": "USDC", "USDT": "USDT"},
         "amount_decimals": 6,
+        "response_schema": ["fee", "time", "output"],
     },
 }
 
@@ -72,6 +76,30 @@ class BridgeAggregator(gl.Contract):
             return body.decode("utf-8", errors="replace")
         return str(body)
 
+    def _validate_response_schema(self, bridge: str, data: str) -> bool:
+        if not data:
+            return False
+        try:
+            parsed = json.loads(data)
+            if not isinstance(parsed, dict):
+                return False
+            adapter = BRIDGE_ADAPTERS.get(bridge)
+            if not adapter:
+                return False
+            required = adapter["response_schema"]
+            for field in required:
+                if field not in parsed:
+                    return False
+            try:
+                float(parsed.get("fee", "0"))
+                float(parsed.get("time", "0"))
+                float(parsed.get("output", "0"))
+            except (ValueError, TypeError):
+                return False
+            return True
+        except (json.JSONDecodeError, TypeError):
+            return False
+
     def _validate_result(self, result: dict) -> bool:
         best_bridge = result.get("best_bridge", "")
         if best_bridge not in self.SUPPORTED_BRIDGES and best_bridge != "none":
@@ -110,8 +138,8 @@ class BridgeAggregator(gl.Contract):
         try:
             content = gl.nondet.web.render(url)
             body = self._decode_body(content)[:1500]
-            if not body:
-                return {"bridge": bridge, "url": url, "data": "", "retrieved": False}
+            if not self._validate_response_schema(bridge, body):
+                return {"bridge": bridge, "url": url, "data": body, "retrieved": False}
             return {"bridge": bridge, "url": url, "data": body, "retrieved": True}
         except Exception:
             return {"bridge": bridge, "url": url, "data": "", "retrieved": False}
